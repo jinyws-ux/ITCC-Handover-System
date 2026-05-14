@@ -1,10 +1,10 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import PrototypeApp from './PrototypeApp'
+import BilingualApp from './BilingualApp'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <PrototypeApp />
+    <BilingualApp />
   </React.StrictMode>
 )
