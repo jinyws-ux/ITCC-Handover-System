@@ -1,10 +1,10 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import AppV5 from './AppV5'
+import AppV6 from './AppV6'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <AppV5 />
+    <AppV6 />
   </React.StrictMode>
 )
