@@ -1,10 +1,10 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import BilingualApp from './BilingualApp'
+import AppV2 from './AppV2'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <BilingualApp />
+    <AppV2 />
   </React.StrictMode>
 )
