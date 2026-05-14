@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import Config
 from extensions import db
@@ -26,6 +26,15 @@ def current_user() -> User | None:
     if not user_id:
         return None
     return User.query.get(user_id)
+
+
+def require_admin() -> tuple[User | None, tuple | None]:
+    user = current_user()
+    if not user:
+        return None, (jsonify({"message": "Login required."}), 401)
+    if user.role != "admin":
+        return user, (jsonify({"message": "Admin permission required."}), 403)
+    return user, None
 
 
 def serialize_user(user: User) -> dict:
@@ -76,6 +85,16 @@ def next_task_no() -> str:
     prefix = f"TASK-{today}-"
     count = Task.query.filter(Task.task_no.like(f"{prefix}%")).count() + 1
     return f"{prefix}{count:03d}"
+
+
+def meta_payload() -> dict:
+    return {
+        "groups": [{"id": item.id, "name": item.name, "description": item.description, "isActive": item.is_active} for item in Group.query.order_by(Group.name).all()],
+        "shifts": [{"id": item.id, "code": item.code, "name": item.name, "defaultStartTime": item.default_start_time, "defaultEndTime": item.default_end_time, "description": item.description, "isActive": item.is_active} for item in Shift.query.order_by(Shift.id).all()],
+        "factories": [{"id": item.id, "name": item.name, "code": item.code, "isActive": item.is_active} for item in Factory.query.order_by(Factory.name).all()],
+        "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id, "factory": item.factory.name if item.factory else "-", "isActive": item.is_active} for item in System.query.order_by(System.name).all()],
+        "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "email": item.email, "role": item.role, "groupId": item.group_id, "group": item.group.name if item.group else "-", "isActive": item.is_active} for item in User.query.order_by(User.display_name).all()],
+    }
 
 
 def register_routes(app: Flask) -> None:
@@ -290,7 +309,91 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/meta")
     def meta():
-        return jsonify({"groups": [{"id": item.id, "name": item.name} for item in Group.query.order_by(Group.name).all()], "shifts": [{"id": item.id, "code": item.code, "name": item.name} for item in Shift.query.order_by(Shift.id).all()], "factories": [{"id": item.id, "name": item.name, "code": item.code} for item in Factory.query.order_by(Factory.name).all()], "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id} for item in System.query.order_by(System.name).all()], "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "groupId": item.group_id} for item in User.query.order_by(User.display_name).all()]})
+        return jsonify(meta_payload())
+
+    @app.get("/api/admin/summary")
+    def admin_summary():
+        _, error = require_admin()
+        if error:
+            return error
+        return jsonify({
+            "counts": {
+                "users": User.query.count(),
+                "groups": Group.query.count(),
+                "shifts": Shift.query.count(),
+                "factories": Factory.query.count(),
+                "systems": System.query.count(),
+                "tasks": Task.query.count(),
+            },
+            "meta": meta_payload(),
+        })
+
+    @app.post("/api/admin/groups")
+    def admin_create_group():
+        _, error = require_admin()
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            return jsonify({"message": "Group name is required."}), 400
+        if Group.query.filter_by(name=name).first():
+            return jsonify({"message": "Group already exists."}), 400
+        group = Group(name=name, description=str(payload.get("description", "")).strip())
+        db.session.add(group)
+        db.session.commit()
+        return jsonify(meta_payload()), 201
+
+    @app.post("/api/admin/factories")
+    def admin_create_factory():
+        _, error = require_admin()
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name", "")).strip()
+        code = str(payload.get("code", "")).strip().upper()
+        if not name or not code:
+            return jsonify({"message": "Factory name and code are required."}), 400
+        if Factory.query.filter((Factory.name == name) | (Factory.code == code)).first():
+            return jsonify({"message": "Factory already exists."}), 400
+        factory = Factory(name=name, code=code)
+        db.session.add(factory)
+        db.session.commit()
+        return jsonify(meta_payload()), 201
+
+    @app.post("/api/admin/systems")
+    def admin_create_system():
+        _, error = require_admin()
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name", "")).strip()
+        code = str(payload.get("code", "")).strip().upper()
+        factory_id = payload.get("factoryId") or None
+        if not name or not code:
+            return jsonify({"message": "System name and code are required."}), 400
+        system = System(name=name, code=code, factory_id=factory_id)
+        db.session.add(system)
+        db.session.commit()
+        return jsonify(meta_payload()), 201
+
+    @app.post("/api/admin/users")
+    def admin_create_user():
+        _, error = require_admin()
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        username = str(payload.get("username", "")).strip()
+        password = str(payload.get("password", "123456"))
+        display_name = str(payload.get("displayName", username)).strip()
+        if not username or not display_name:
+            return jsonify({"message": "Username and display name are required."}), 400
+        if User.query.filter_by(username=username).first():
+            return jsonify({"message": "User already exists."}), 400
+        user = User(username=username, password_hash=generate_password_hash(password), display_name=display_name, email=str(payload.get("email", "")).strip(), role=str(payload.get("role", "user")).strip() or "user", group_id=payload.get("groupId") or None)
+        db.session.add(user)
+        db.session.commit()
+        return jsonify(meta_payload()), 201
 
     @app.get("/")
     def index():
