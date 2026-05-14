@@ -1,24 +1,77 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request, session
 from flask_cors import CORS
+from werkzeug.security import check_password_hash
 
 from config import Config
 from extensions import db
-from models import HypercareCheck, Task
+from models import Group, Handover, HypercareCheck, Schedule, Shift, Task, TaskLog, User
 from seed import seed_database
-from serializers import serialize_task_card, serialize_task_detail
+from serializers import format_dt, serialize_task_card, serialize_task_detail
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
-    CORS(app)
+    CORS(app, supports_credentials=True)
     db.init_app(app)
 
     register_routes(app)
     return app
+
+
+def current_user() -> User | None:
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    return User.query.get(user_id)
+
+
+def serialize_user(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "displayName": user.display_name,
+        "email": user.email,
+        "role": user.role,
+        "group": user.group.name if user.group else "-",
+    }
+
+
+def dashboard_payload(user: User | None = None) -> dict:
+    tasks = Task.query.order_by(Task.updated_at.desc()).all()
+    waiting_next_shift = [task for task in tasks if task.status == "Waiting Next Shift"]
+    monitoring = [task for task in tasks if task.is_monitoring or task.status == "Monitoring"]
+    notice_only = [task for task in tasks if task.handover_category == "Notice"]
+    need_confirmation = [task for task in tasks if task.need_ack or task.is_e_to_d1]
+
+    today_start = datetime.combine(date(2026, 5, 14), datetime.min.time())
+    today_end = datetime.combine(date(2026, 5, 14), datetime.max.time())
+    hypercare_task_ids = {
+        check.task_id
+        for check in HypercareCheck.query.filter(
+            HypercareCheck.check_time >= today_start,
+            HypercareCheck.check_time <= today_end,
+        ).all()
+    }
+    today_hypercare = [task for task in tasks if task.id in hypercare_task_ids]
+
+    return {
+        "currentDate": "2026-05-14",
+        "currentShift": {"code": "D2", "time": "09:30 - 18:00", "group": "Group B"},
+        "nextShift": {"code": "E", "time": "17:00 - 03:00", "group": "Group C"},
+        "user": serialize_user(user) if user else {"displayName": "Guest", "role": "guest", "group": "-"},
+        "sections": {
+            "waitingNextShift": [serialize_task_card(task) for task in waiting_next_shift],
+            "monitoring": [serialize_task_card(task) for task in monitoring],
+            "noticeOnly": [serialize_task_card(task) for task in notice_only],
+            "todayHypercare": [serialize_task_card(task) for task in today_hypercare],
+            "needConfirmation": [serialize_task_card(task) for task in need_confirmation],
+            "recentlyUpdated": [serialize_task_card(task) for task in tasks],
+        },
+    }
 
 
 def register_routes(app: Flask) -> None:
@@ -33,51 +86,150 @@ def register_routes(app: Flask) -> None:
         seed_database()
         return jsonify({"status": "ok", "message": "Database initialized with seed data."})
 
+    @app.post("/api/auth/login")
+    def login():
+        payload = request.get_json(silent=True) or {}
+        username = str(payload.get("username", "")).strip()
+        password = str(payload.get("password", ""))
+        user = User.query.filter_by(username=username, is_active=True).first()
+        if not user or not check_password_hash(user.password_hash, password):
+            return jsonify({"message": "Invalid username or password."}), 401
+        session["user_id"] = user.id
+        return jsonify({"user": serialize_user(user)})
+
+    @app.post("/api/auth/logout")
+    def logout():
+        session.clear()
+        return jsonify({"status": "ok"})
+
+    @app.get("/api/auth/me")
+    def me():
+        user = current_user()
+        if not user:
+            return jsonify({"user": None}), 200
+        return jsonify({"user": serialize_user(user)})
+
     @app.get("/api/dashboard")
     def dashboard():
-        tasks = Task.query.order_by(Task.updated_at.desc()).all()
-        waiting_next_shift = [task for task in tasks if task.status == "Waiting Next Shift"]
-        monitoring = [task for task in tasks if task.is_monitoring or task.status == "Monitoring"]
-        notice_only = [task for task in tasks if task.handover_category == "Notice"]
-        need_confirmation = [task for task in tasks if task.need_ack or task.is_e_to_d1]
-
-        today_start = datetime.combine(date(2026, 5, 14), datetime.min.time())
-        today_end = datetime.combine(date(2026, 5, 14), datetime.max.time())
-        hypercare_task_ids = {
-            check.task_id
-            for check in HypercareCheck.query.filter(
-                HypercareCheck.check_time >= today_start,
-                HypercareCheck.check_time <= today_end,
-            ).all()
-        }
-        today_hypercare = [task for task in tasks if task.id in hypercare_task_ids]
-
-        return jsonify(
-            {
-                "currentDate": "2026-05-14",
-                "currentShift": {"code": "D2", "time": "09:30 - 18:00", "group": "Group B"},
-                "nextShift": {"code": "E", "time": "17:00 - 03:00", "group": "Group C"},
-                "user": {"displayName": "Demo User", "role": "admin", "group": "Group B"},
-                "sections": {
-                    "waitingNextShift": [serialize_task_card(task) for task in waiting_next_shift],
-                    "monitoring": [serialize_task_card(task) for task in monitoring],
-                    "noticeOnly": [serialize_task_card(task) for task in notice_only],
-                    "todayHypercare": [serialize_task_card(task) for task in today_hypercare],
-                    "needConfirmation": [serialize_task_card(task) for task in need_confirmation],
-                    "recentlyUpdated": [serialize_task_card(task) for task in tasks],
-                },
-            }
-        )
+        return jsonify(dashboard_payload(current_user()))
 
     @app.get("/api/tasks")
     def list_tasks():
-        tasks = Task.query.order_by(Task.updated_at.desc()).all()
+        query = Task.query
+        status = request.args.get("status")
+        task_type = request.args.get("type")
+        keyword = request.args.get("q")
+        if status:
+            query = query.filter(Task.status == status)
+        if task_type:
+            query = query.filter(Task.task_type == task_type)
+        if keyword:
+            like = f"%{keyword}%"
+            query = query.filter(Task.title.ilike(like) | Task.task_no.ilike(like) | Task.description.ilike(like))
+        tasks = query.order_by(Task.updated_at.desc()).all()
         return jsonify({"items": [serialize_task_card(task) for task in tasks], "total": len(tasks)})
 
     @app.get("/api/tasks/<int:task_id>")
     def get_task(task_id: int):
         task = Task.query.get_or_404(task_id)
         return jsonify(serialize_task_detail(task))
+
+    @app.post("/api/tasks/<int:task_id>/logs")
+    def add_task_log(task_id: int):
+        user = current_user()
+        task = Task.query.get_or_404(task_id)
+        payload = request.get_json(silent=True) or {}
+        content = str(payload.get("content", "")).strip()
+        if not content:
+            return jsonify({"message": "Content is required."}), 400
+        log = TaskLog(task=task, log_type=payload.get("logType", "Note"), content=content, created_by=user.id if user else None)
+        task.updated_by = user.id if user else task.updated_by
+        db.session.add(log)
+        db.session.commit()
+        return jsonify(serialize_task_detail(task))
+
+    @app.post("/api/tasks/<int:task_id>/status")
+    def update_task_status(task_id: int):
+        user = current_user()
+        task = Task.query.get_or_404(task_id)
+        payload = request.get_json(silent=True) or {}
+        new_status = str(payload.get("status", "")).strip()
+        if not new_status:
+            return jsonify({"message": "Status is required."}), 400
+        old_status = task.status
+        task.status = new_status
+        task.updated_by = user.id if user else task.updated_by
+        if new_status == "Closed":
+            task.closed_at = datetime.utcnow()
+            task.closed_by = user.id if user else task.closed_by
+        db.session.add(TaskLog(task=task, log_type="Status", content=f"Status changed from {old_status} to {new_status}.", old_status=old_status, new_status=new_status, created_by=user.id if user else None))
+        db.session.commit()
+        return jsonify(serialize_task_detail(task))
+
+    @app.post("/api/tasks/<int:task_id>/ack")
+    def acknowledge_task(task_id: int):
+        user = current_user()
+        task = Task.query.get_or_404(task_id)
+        handover = Handover.query.filter_by(task_id=task.id).order_by(Handover.handed_over_at.desc()).first()
+        if handover:
+            handover.acknowledged_by = user.id if user else None
+            handover.acknowledged_at = datetime.utcnow()
+            handover.status = "Acknowledged"
+        db.session.add(TaskLog(task=task, log_type="Ack", content="Handover acknowledged.", created_by=user.id if user else None))
+        db.session.commit()
+        return jsonify(serialize_task_detail(task))
+
+    @app.post("/api/tasks/<int:task_id>/accept")
+    def accept_task(task_id: int):
+        user = current_user()
+        task = Task.query.get_or_404(task_id)
+        handover = Handover.query.filter_by(task_id=task.id).order_by(Handover.handed_over_at.desc()).first()
+        if handover:
+            handover.accepted_by = user.id if user else None
+            handover.accepted_at = datetime.utcnow()
+            handover.status = "Accepted"
+        task.status = "In Progress"
+        db.session.add(TaskLog(task=task, log_type="Accept", content="Handover accepted and task moved to In Progress.", new_status="In Progress", created_by=user.id if user else None))
+        db.session.commit()
+        return jsonify(serialize_task_detail(task))
+
+    @app.get("/api/timeline")
+    def timeline():
+        tasks = Task.query.order_by(Task.updated_at.desc()).all()
+        return jsonify({
+            "items": [serialize_task_card(task) for task in tasks],
+            "total": len(tasks),
+            "stats": {
+                "open": Task.query.filter(Task.status != "Closed").count(),
+                "closed": Task.query.filter(Task.status == "Closed").count(),
+                "monitoring": Task.query.filter(Task.is_monitoring.is_(True)).count(),
+                "waitingNextShift": Task.query.filter(Task.status == "Waiting Next Shift").count(),
+            },
+        })
+
+    @app.get("/api/calendar")
+    def calendar():
+        schedules = Schedule.query.order_by(Schedule.work_date.asc()).all()
+        items = []
+        for schedule in schedules:
+            items.append({
+                "id": schedule.id,
+                "date": format_dt(schedule.work_date),
+                "shift": schedule.shift.code,
+                "group": schedule.group.name,
+                "startTime": schedule.start_time,
+                "endTime": schedule.end_time,
+                "members": schedule.members_text,
+                "remark": schedule.remark,
+            })
+        return jsonify({"items": items})
+
+    @app.get("/api/meta")
+    def meta():
+        return jsonify({
+            "groups": [{"id": item.id, "name": item.name} for item in Group.query.order_by(Group.name).all()],
+            "shifts": [{"id": item.id, "code": item.code, "name": item.name} for item in Shift.query.order_by(Shift.id).all()],
+        })
 
     @app.get("/")
     def index():
