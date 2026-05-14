@@ -17,7 +17,6 @@ def create_app() -> Flask:
     app.config.from_object(Config)
     CORS(app, supports_credentials=True)
     db.init_app(app)
-
     register_routes(app)
     return app
 
@@ -46,7 +45,6 @@ def dashboard_payload(user: User | None = None) -> dict:
     monitoring = [task for task in tasks if task.is_monitoring or task.status == "Monitoring"]
     notice_only = [task for task in tasks if task.handover_category == "Notice"]
     need_confirmation = [task for task in tasks if task.need_ack or task.is_e_to_d1]
-
     today_start = datetime.combine(date(2026, 5, 14), datetime.min.time())
     today_end = datetime.combine(date(2026, 5, 14), datetime.max.time())
     hypercare_task_ids = {
@@ -57,7 +55,6 @@ def dashboard_payload(user: User | None = None) -> dict:
         ).all()
     }
     today_hypercare = [task for task in tasks if task.id in hypercare_task_ids]
-
     return {
         "currentDate": "2026-05-14",
         "currentShift": {"code": "D2", "time": "09:30 - 18:00", "group": "Group B"},
@@ -143,69 +140,37 @@ def register_routes(app: Flask) -> None:
         title = str(payload.get("title", "")).strip()
         if not title:
             return jsonify({"message": "Title is required."}), 400
-
-        task_type = str(payload.get("taskType", "Internal")).strip() or "Internal"
-        source_type = str(payload.get("sourceType", "Manual")).strip() or "Manual"
-        priority = str(payload.get("priority", "None")).strip() or "None"
-        status = str(payload.get("status", "Open")).strip() or "Open"
-        handover_category = str(payload.get("handoverCategory", "Notice")).strip() or "Notice"
-        description = str(payload.get("description", "")).strip()
-        next_action = str(payload.get("nextAction", "")).strip()
-
-        factory_id = payload.get("factoryId") or None
-        system_id = payload.get("systemId") or None
-        target_shift_id = payload.get("targetShiftId") or None
-        target_group_id = payload.get("targetGroupId") or None
-        owner_user_id = payload.get("ownerUserId") or None
-        owner_group_id = payload.get("ownerGroupId") or target_group_id
-        is_monitoring = bool(payload.get("isMonitoring", False)) or handover_category == "Monitoring"
-        need_ack = bool(payload.get("needAck", False))
-        is_e_to_d1 = bool(payload.get("isED1", False))
-
         task = Task(
             task_no=next_task_no(),
             title=title,
-            task_type=task_type,
-            source_type=source_type,
-            priority=priority,
-            status=status,
-            handover_category=handover_category,
-            description=description,
-            next_action=next_action,
-            factory_id=factory_id,
-            system_id=system_id,
-            target_shift_id=target_shift_id,
-            target_group_id=target_group_id,
-            owner_user_id=owner_user_id,
-            owner_group_id=owner_group_id,
-            is_monitoring=is_monitoring,
-            need_ack=need_ack,
-            is_e_to_d1=is_e_to_d1,
+            task_type=str(payload.get("taskType", "Internal")).strip() or "Internal",
+            source_type=str(payload.get("sourceType", "Manual")).strip() or "Manual",
+            priority=str(payload.get("priority", "None")).strip() or "None",
+            status=str(payload.get("status", "Open")).strip() or "Open",
+            handover_category=str(payload.get("handoverCategory", "Notice")).strip() or "Notice",
+            description=str(payload.get("description", "")).strip(),
+            next_action=str(payload.get("nextAction", "")).strip(),
+            factory_id=payload.get("factoryId") or None,
+            system_id=payload.get("systemId") or None,
+            target_shift_id=payload.get("targetShiftId") or None,
+            target_group_id=payload.get("targetGroupId") or None,
+            owner_user_id=payload.get("ownerUserId") or None,
+            owner_group_id=payload.get("ownerGroupId") or payload.get("targetGroupId") or None,
+            is_monitoring=bool(payload.get("isMonitoring", False)) or str(payload.get("handoverCategory", "")) == "Monitoring",
+            need_ack=bool(payload.get("needAck", False)),
+            is_e_to_d1=bool(payload.get("isED1", False)),
             created_by=user.id if user else None,
             updated_by=user.id if user else None,
         )
         db.session.add(task)
         db.session.flush()
-
-        external_links = payload.get("externalLinks", []) or []
-        for link in external_links:
+        for link in payload.get("externalLinks", []) or []:
             external_type = str(link.get("externalType", "")).strip()
             external_id = str(link.get("externalId", "")).strip()
             external_url = str(link.get("externalUrl", "")).strip()
             external_title = str(link.get("externalTitle", "")).strip()
             if external_type and (external_id or external_url or external_title):
-                db.session.add(TaskExternalLink(
-                    task=task,
-                    external_type=external_type,
-                    external_id=external_id,
-                    external_title=external_title,
-                    external_url=external_url,
-                    external_status=str(link.get("externalStatus", "")).strip(),
-                    is_primary=bool(link.get("isPrimary", False)),
-                    created_by=user.id if user else None,
-                    remark=str(link.get("remark", "")).strip(),
-                ))
-
+                db.session.add(TaskExternalLink(task=task, external_type=external_type, external_id=external_id, external_title=external_title, external_url=external_url, external_status=str(link.get("externalStatus", "")).strip(), is_primary=bool(link.get("isPrimary", False)), created_by=user.id if user else None, remark=str(link.get("remark", "")).strip()))
         db.session.add(TaskLog(task=task, log_type="Create", content="Task created from handover system.", new_status=task.status, created_by=user.id if user else None))
         db.session.commit()
         return jsonify(serialize_task_detail(task)), 201
@@ -213,6 +178,28 @@ def register_routes(app: Flask) -> None:
     @app.get("/api/tasks/<int:task_id>")
     def get_task(task_id: int):
         task = Task.query.get_or_404(task_id)
+        return jsonify(serialize_task_detail(task))
+
+    @app.post("/api/tasks/<int:task_id>/external-links")
+    def add_external_link(task_id: int):
+        user = current_user()
+        task = Task.query.get_or_404(task_id)
+        payload = request.get_json(silent=True) or {}
+        external_type = str(payload.get("externalType", "")).strip()
+        external_id = str(payload.get("externalId", "")).strip()
+        external_title = str(payload.get("externalTitle", "")).strip()
+        external_url = str(payload.get("externalUrl", "")).strip()
+        external_status = str(payload.get("externalStatus", "")).strip()
+        remark = str(payload.get("remark", "")).strip()
+        if not external_type:
+            return jsonify({"message": "External type is required."}), 400
+        if not (external_id or external_title or external_url):
+            return jsonify({"message": "At least one external identifier, title, or URL is required."}), 400
+        link = TaskExternalLink(task=task, external_type=external_type, external_id=external_id, external_title=external_title, external_url=external_url, external_status=external_status, is_primary=bool(payload.get("isPrimary", False)), created_by=user.id if user else None, remark=remark)
+        db.session.add(link)
+        db.session.add(TaskLog(task=task, log_type="External Link", content=f"Added {external_type} reference {external_id or external_title or external_url}.", created_by=user.id if user else None))
+        task.updated_by = user.id if user else task.updated_by
+        db.session.commit()
         return jsonify(serialize_task_detail(task))
 
     @app.post("/api/tasks/<int:task_id>/logs")
@@ -276,44 +263,34 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/timeline")
     def timeline():
-        tasks = Task.query.order_by(Task.updated_at.desc()).all()
-        return jsonify({
-            "items": [serialize_task_card(task) for task in tasks],
-            "total": len(tasks),
-            "stats": {
-                "open": Task.query.filter(Task.status != "Closed").count(),
-                "closed": Task.query.filter(Task.status == "Closed").count(),
-                "monitoring": Task.query.filter(Task.is_monitoring.is_(True)).count(),
-                "waitingNextShift": Task.query.filter(Task.status == "Waiting Next Shift").count(),
-            },
-        })
+        query = Task.query
+        keyword = request.args.get("q")
+        task_type = request.args.get("type")
+        status = request.args.get("status")
+        priority = request.args.get("priority")
+        if keyword:
+            like = f"%{keyword}%"
+            query = query.filter(Task.title.ilike(like) | Task.task_no.ilike(like) | Task.description.ilike(like) | Task.next_action.ilike(like))
+        if task_type:
+            query = query.filter(Task.task_type == task_type)
+        if status:
+            query = query.filter(Task.status == status)
+        if priority:
+            query = query.filter(Task.priority == priority)
+        tasks = query.order_by(Task.updated_at.desc()).all()
+        return jsonify({"items": [serialize_task_card(task) for task in tasks], "total": len(tasks), "stats": {"open": Task.query.filter(Task.status != "Closed").count(), "closed": Task.query.filter(Task.status == "Closed").count(), "monitoring": Task.query.filter(Task.is_monitoring.is_(True)).count(), "waitingNextShift": Task.query.filter(Task.status == "Waiting Next Shift").count()}})
 
     @app.get("/api/calendar")
     def calendar():
         schedules = Schedule.query.order_by(Schedule.work_date.asc()).all()
         items = []
         for schedule in schedules:
-            items.append({
-                "id": schedule.id,
-                "date": format_dt(schedule.work_date),
-                "shift": schedule.shift.code,
-                "group": schedule.group.name,
-                "startTime": schedule.start_time,
-                "endTime": schedule.end_time,
-                "members": schedule.members_text,
-                "remark": schedule.remark,
-            })
+            items.append({"id": schedule.id, "date": format_dt(schedule.work_date), "shift": schedule.shift.code, "group": schedule.group.name, "startTime": schedule.start_time, "endTime": schedule.end_time, "members": schedule.members_text, "remark": schedule.remark})
         return jsonify({"items": items})
 
     @app.get("/api/meta")
     def meta():
-        return jsonify({
-            "groups": [{"id": item.id, "name": item.name} for item in Group.query.order_by(Group.name).all()],
-            "shifts": [{"id": item.id, "code": item.code, "name": item.name} for item in Shift.query.order_by(Shift.id).all()],
-            "factories": [{"id": item.id, "name": item.name, "code": item.code} for item in Factory.query.order_by(Factory.name).all()],
-            "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id} for item in System.query.order_by(System.name).all()],
-            "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "groupId": item.group_id} for item in User.query.order_by(User.display_name).all()],
-        })
+        return jsonify({"groups": [{"id": item.id, "name": item.name} for item in Group.query.order_by(Group.name).all()], "shifts": [{"id": item.id, "code": item.code, "name": item.name} for item in Shift.query.order_by(Shift.id).all()], "factories": [{"id": item.id, "name": item.name, "code": item.code} for item in Factory.query.order_by(Factory.name).all()], "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id} for item in System.query.order_by(System.name).all()], "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "groupId": item.group_id} for item in User.query.order_by(User.display_name).all()]})
 
     @app.get("/")
     def index():
