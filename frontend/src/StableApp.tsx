@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, CheckCircle2, Clock3, ExternalLink, ListChecks, LogOut, MonitorDot, Search, ShieldAlert, UserCircle } from 'lucide-react'
+import { AlertTriangle, CalendarDays, CheckCircle2, Clock3, ExternalLink, ListChecks, LogOut, MonitorDot, Search, ShieldAlert, UserCircle } from 'lucide-react'
 
 type User = { id: number; username: string; displayName: string; email: string; role: string; group: string }
 
