@@ -23,9 +23,7 @@ def create_app() -> Flask:
 
 def current_user() -> User | None:
     user_id = session.get("user_id")
-    if not user_id:
-        return None
-    return User.query.get(user_id)
+    return User.query.get(user_id) if user_id else None
 
 
 def require_admin() -> tuple[User | None, tuple | None]:
@@ -38,14 +36,39 @@ def require_admin() -> tuple[User | None, tuple | None]:
 
 
 def serialize_user(user: User) -> dict:
+    return {"id": user.id, "username": user.username, "displayName": user.display_name, "email": user.email, "role": user.role, "group": user.group.name if user.group else "-"}
+
+
+def serialize_schedule(schedule: Schedule) -> dict:
     return {
-        "id": user.id,
-        "username": user.username,
-        "displayName": user.display_name,
-        "email": user.email,
-        "role": user.role,
-        "group": user.group.name if user.group else "-",
+        "id": schedule.id,
+        "date": format_dt(schedule.work_date),
+        "shift": schedule.shift.code if schedule.shift else "-",
+        "shiftId": schedule.shift_id,
+        "group": schedule.group.name if schedule.group else "-",
+        "groupId": schedule.group_id,
+        "startTime": schedule.start_time,
+        "endTime": schedule.end_time,
+        "members": schedule.members_text,
+        "remark": schedule.remark,
     }
+
+
+def meta_payload() -> dict:
+    return {
+        "groups": [{"id": item.id, "name": item.name, "description": item.description, "isActive": item.is_active} for item in Group.query.order_by(Group.name).all()],
+        "shifts": [{"id": item.id, "code": item.code, "name": item.name, "defaultStartTime": item.default_start_time, "defaultEndTime": item.default_end_time, "description": item.description, "isActive": item.is_active} for item in Shift.query.order_by(Shift.id).all()],
+        "factories": [{"id": item.id, "name": item.name, "code": item.code, "isActive": item.is_active} for item in Factory.query.order_by(Factory.name).all()],
+        "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id, "factory": item.factory.name if item.factory else "-", "isActive": item.is_active} for item in System.query.order_by(System.name).all()],
+        "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "email": item.email, "role": item.role, "groupId": item.group_id, "group": item.group.name if item.group else "-", "isActive": item.is_active} for item in User.query.order_by(User.display_name).all()],
+    }
+
+
+def next_task_no() -> str:
+    today = datetime.utcnow().strftime("%Y%m%d")
+    prefix = f"TASK-{today}-"
+    count = Task.query.filter(Task.task_no.like(f"{prefix}%")).count() + 1
+    return f"{prefix}{count:03d}"
 
 
 def dashboard_payload(user: User | None = None) -> dict:
@@ -56,13 +79,7 @@ def dashboard_payload(user: User | None = None) -> dict:
     need_confirmation = [task for task in tasks if task.need_ack or task.is_e_to_d1]
     today_start = datetime.combine(date(2026, 5, 14), datetime.min.time())
     today_end = datetime.combine(date(2026, 5, 14), datetime.max.time())
-    hypercare_task_ids = {
-        check.task_id
-        for check in HypercareCheck.query.filter(
-            HypercareCheck.check_time >= today_start,
-            HypercareCheck.check_time <= today_end,
-        ).all()
-    }
+    hypercare_task_ids = {check.task_id for check in HypercareCheck.query.filter(HypercareCheck.check_time >= today_start, HypercareCheck.check_time <= today_end).all()}
     today_hypercare = [task for task in tasks if task.id in hypercare_task_ids]
     return {
         "currentDate": "2026-05-14",
@@ -77,23 +94,6 @@ def dashboard_payload(user: User | None = None) -> dict:
             "needConfirmation": [serialize_task_card(task) for task in need_confirmation],
             "recentlyUpdated": [serialize_task_card(task) for task in tasks],
         },
-    }
-
-
-def next_task_no() -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
-    prefix = f"TASK-{today}-"
-    count = Task.query.filter(Task.task_no.like(f"{prefix}%")).count() + 1
-    return f"{prefix}{count:03d}"
-
-
-def meta_payload() -> dict:
-    return {
-        "groups": [{"id": item.id, "name": item.name, "description": item.description, "isActive": item.is_active} for item in Group.query.order_by(Group.name).all()],
-        "shifts": [{"id": item.id, "code": item.code, "name": item.name, "defaultStartTime": item.default_start_time, "defaultEndTime": item.default_end_time, "description": item.description, "isActive": item.is_active} for item in Shift.query.order_by(Shift.id).all()],
-        "factories": [{"id": item.id, "name": item.name, "code": item.code, "isActive": item.is_active} for item in Factory.query.order_by(Factory.name).all()],
-        "systems": [{"id": item.id, "name": item.name, "code": item.code, "factoryId": item.factory_id, "factory": item.factory.name if item.factory else "-", "isActive": item.is_active} for item in System.query.order_by(System.name).all()],
-        "users": [{"id": item.id, "displayName": item.display_name, "username": item.username, "email": item.email, "role": item.role, "groupId": item.group_id, "group": item.group.name if item.group else "-", "isActive": item.is_active} for item in User.query.order_by(User.display_name).all()],
     }
 
 
@@ -128,13 +128,15 @@ def register_routes(app: Flask) -> None:
     @app.get("/api/auth/me")
     def me():
         user = current_user()
-        if not user:
-            return jsonify({"user": None}), 200
-        return jsonify({"user": serialize_user(user)})
+        return jsonify({"user": serialize_user(user) if user else None})
 
     @app.get("/api/dashboard")
     def dashboard():
         return jsonify(dashboard_payload(current_user()))
+
+    @app.get("/api/meta")
+    def meta():
+        return jsonify(meta_payload())
 
     @app.get("/api/tasks")
     def list_tasks():
@@ -196,8 +198,7 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/tasks/<int:task_id>")
     def get_task(task_id: int):
-        task = Task.query.get_or_404(task_id)
-        return jsonify(serialize_task_detail(task))
+        return jsonify(serialize_task_detail(Task.query.get_or_404(task_id)))
 
     @app.post("/api/tasks/<int:task_id>/external-links")
     def add_external_link(task_id: int):
@@ -214,8 +215,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"message": "External type is required."}), 400
         if not (external_id or external_title or external_url):
             return jsonify({"message": "At least one external identifier, title, or URL is required."}), 400
-        link = TaskExternalLink(task=task, external_type=external_type, external_id=external_id, external_title=external_title, external_url=external_url, external_status=external_status, is_primary=bool(payload.get("isPrimary", False)), created_by=user.id if user else None, remark=remark)
-        db.session.add(link)
+        db.session.add(TaskExternalLink(task=task, external_type=external_type, external_id=external_id, external_title=external_title, external_url=external_url, external_status=external_status, is_primary=bool(payload.get("isPrimary", False)), created_by=user.id if user else None, remark=remark))
         db.session.add(TaskLog(task=task, log_type="External Link", content=f"Added {external_type} reference {external_id or external_title or external_url}.", created_by=user.id if user else None))
         task.updated_by = user.id if user else task.updated_by
         db.session.commit()
@@ -229,9 +229,8 @@ def register_routes(app: Flask) -> None:
         content = str(payload.get("content", "")).strip()
         if not content:
             return jsonify({"message": "Content is required."}), 400
-        log = TaskLog(task=task, log_type=payload.get("logType", "Note"), content=content, created_by=user.id if user else None)
+        db.session.add(TaskLog(task=task, log_type=payload.get("logType", "Note"), content=content, created_by=user.id if user else None))
         task.updated_by = user.id if user else task.updated_by
-        db.session.add(log)
         db.session.commit()
         return jsonify(serialize_task_detail(task))
 
@@ -301,32 +300,60 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/calendar")
     def calendar():
-        schedules = Schedule.query.order_by(Schedule.work_date.asc()).all()
-        items = []
-        for schedule in schedules:
-            items.append({"id": schedule.id, "date": format_dt(schedule.work_date), "shift": schedule.shift.code, "group": schedule.group.name, "startTime": schedule.start_time, "endTime": schedule.end_time, "members": schedule.members_text, "remark": schedule.remark})
-        return jsonify({"items": items})
+        month = request.args.get("month")
+        query = Schedule.query
+        if month:
+            try:
+                start = datetime.strptime(month + "-01", "%Y-%m-%d").date()
+                end = date(start.year + (1 if start.month == 12 else 0), 1 if start.month == 12 else start.month + 1, 1)
+                query = query.filter(Schedule.work_date >= start, Schedule.work_date < end)
+            except ValueError:
+                return jsonify({"message": "Invalid month format. Use YYYY-MM."}), 400
+        schedules = query.order_by(Schedule.work_date.asc(), Schedule.shift_id.asc()).all()
+        items = [serialize_schedule(schedule) for schedule in schedules]
+        by_date: dict[str, list[dict]] = {}
+        for item in items:
+            by_date.setdefault(item["date"], []).append(item)
+        return jsonify({"items": items, "byDate": by_date})
 
-    @app.get("/api/meta")
-    def meta():
-        return jsonify(meta_payload())
+    @app.post("/api/admin/schedules")
+    def admin_create_schedule():
+        user, error = require_admin()
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        work_date_raw = str(payload.get("workDate", "")).strip()
+        shift_id = payload.get("shiftId")
+        group_id = payload.get("groupId")
+        if not work_date_raw or not shift_id or not group_id:
+            return jsonify({"message": "Work date, shift, and group are required."}), 400
+        try:
+            work_date = datetime.strptime(work_date_raw, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"message": "Invalid work date format. Use YYYY-MM-DD."}), 400
+        shift = Shift.query.get(shift_id)
+        if not shift:
+            return jsonify({"message": "Shift not found."}), 400
+        schedule = Schedule(
+            work_date=work_date,
+            shift_id=shift_id,
+            group_id=group_id,
+            start_time=str(payload.get("startTime") or shift.default_start_time),
+            end_time=str(payload.get("endTime") or shift.default_end_time),
+            members_text=str(payload.get("members", "")).strip(),
+            remark=str(payload.get("remark", "")).strip(),
+            created_by=user.id if user else None,
+        )
+        db.session.add(schedule)
+        db.session.commit()
+        return jsonify(serialize_schedule(schedule)), 201
 
     @app.get("/api/admin/summary")
     def admin_summary():
         _, error = require_admin()
         if error:
             return error
-        return jsonify({
-            "counts": {
-                "users": User.query.count(),
-                "groups": Group.query.count(),
-                "shifts": Shift.query.count(),
-                "factories": Factory.query.count(),
-                "systems": System.query.count(),
-                "tasks": Task.query.count(),
-            },
-            "meta": meta_payload(),
-        })
+        return jsonify({"counts": {"users": User.query.count(), "groups": Group.query.count(), "shifts": Shift.query.count(), "factories": Factory.query.count(), "systems": System.query.count(), "tasks": Task.query.count(), "schedules": Schedule.query.count()}, "meta": meta_payload()})
 
     @app.post("/api/admin/groups")
     def admin_create_group():
@@ -339,8 +366,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"message": "Group name is required."}), 400
         if Group.query.filter_by(name=name).first():
             return jsonify({"message": "Group already exists."}), 400
-        group = Group(name=name, description=str(payload.get("description", "")).strip())
-        db.session.add(group)
+        db.session.add(Group(name=name, description=str(payload.get("description", "")).strip()))
         db.session.commit()
         return jsonify(meta_payload()), 201
 
@@ -356,8 +382,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"message": "Factory name and code are required."}), 400
         if Factory.query.filter((Factory.name == name) | (Factory.code == code)).first():
             return jsonify({"message": "Factory already exists."}), 400
-        factory = Factory(name=name, code=code)
-        db.session.add(factory)
+        db.session.add(Factory(name=name, code=code))
         db.session.commit()
         return jsonify(meta_payload()), 201
 
@@ -372,8 +397,7 @@ def register_routes(app: Flask) -> None:
         factory_id = payload.get("factoryId") or None
         if not name or not code:
             return jsonify({"message": "System name and code are required."}), 400
-        system = System(name=name, code=code, factory_id=factory_id)
-        db.session.add(system)
+        db.session.add(System(name=name, code=code, factory_id=factory_id))
         db.session.commit()
         return jsonify(meta_payload()), 201
 
@@ -390,8 +414,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"message": "Username and display name are required."}), 400
         if User.query.filter_by(username=username).first():
             return jsonify({"message": "User already exists."}), 400
-        user = User(username=username, password_hash=generate_password_hash(password), display_name=display_name, email=str(payload.get("email", "")).strip(), role=str(payload.get("role", "user")).strip() or "user", group_id=payload.get("groupId") or None)
-        db.session.add(user)
+        db.session.add(User(username=username, password_hash=generate_password_hash(password), display_name=display_name, email=str(payload.get("email", "")).strip(), role=str(payload.get("role", "user")).strip() or "user", group_id=payload.get("groupId") or None))
         db.session.commit()
         return jsonify(meta_payload()), 201
 
