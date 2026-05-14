@@ -7,6 +7,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import Config
 from extensions import db
+from hypercare_routes import register_hypercare_routes
 from models import Factory, Group, Handover, HypercareCheck, Schedule, Shift, System, Task, TaskExternalLink, TaskLog, User
 from seed import seed_database
 from serializers import format_dt, serialize_task_card, serialize_task_detail
@@ -18,6 +19,7 @@ def create_app() -> Flask:
     CORS(app, supports_credentials=True)
     db.init_app(app)
     register_routes(app)
+    register_hypercare_routes(app)
     return app
 
 
