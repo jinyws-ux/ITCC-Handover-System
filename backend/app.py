@@ -8,7 +8,7 @@ from config import Config
 from extensions import db
 from seed import seed_database
 from auth import current_user
-from services.dashboard_service import dashboard_payload
+from services.dashboard_service import dashboard_payload, dashboard_payload_v2
 from routes.auth_routes import register_auth_routes
 from routes.task_routes import register_task_routes
 from routes.calendar_routes import register_calendar_routes
@@ -30,6 +30,20 @@ def create_app() -> Flask:
     @app.post('/api/init-db')
     def init_db():
         db.drop_all(); db.create_all(); seed_database(); return jsonify({'status': 'ok', 'message': 'Database initialized with seed data.'})
+
+
+    @app.get('/api/dashboard-v2')
+    def dashboard_v2():
+        from datetime import datetime
+        from flask import request
+        raw = request.args.get('businessDate')
+        bdate = None
+        if raw:
+            try:
+                bdate = datetime.strptime(raw, '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({'message': 'Invalid businessDate format. Use YYYY-MM-DD.'}), 400
+        return jsonify(dashboard_payload_v2(current_user(), bdate))
 
     @app.get('/api/dashboard')
     def dashboard():
