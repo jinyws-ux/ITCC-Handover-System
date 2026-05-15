@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from flask import jsonify, request, session
+from flask import jsonify, request
 
 from extensions import db
-from models import HypercareCheck, Task, TaskLog, User
+from models import HypercareCheck, Task, TaskLog
 from serializers import format_dt, serialize_task_card, serialize_task_detail
 
 
-def current_user() -> User | None:
-    user_id = session.get("user_id")
-    return User.query.get(user_id) if user_id else None
-
+from auth import current_user
+from services.task_service import apply_task_filters
 
 def parse_check_time(value: str) -> datetime:
     raw = str(value or "").strip().replace("T", " ")
@@ -65,23 +63,6 @@ def serialize_timeline_event(event_type: str, event_time: datetime, task: Task, 
             for link in task.external_links
         ],
     }
-
-
-def apply_task_filters(query):
-    keyword = request.args.get("q")
-    task_type = request.args.get("type")
-    status = request.args.get("status")
-    priority = request.args.get("priority")
-    if keyword:
-        like = f"%{keyword}%"
-        query = query.filter(Task.title.ilike(like) | Task.task_no.ilike(like) | Task.description.ilike(like) | Task.next_action.ilike(like))
-    if task_type:
-        query = query.filter(Task.task_type == task_type)
-    if status:
-        query = query.filter(Task.status == status)
-    if priority:
-        query = query.filter(Task.priority == priority)
-    return query
 
 
 def register_hypercare_routes(app):
