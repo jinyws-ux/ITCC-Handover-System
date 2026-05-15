@@ -1,0 +1,5 @@
+import { Lang } from '../types'
+
+export const jp = (lang: Lang, v: string) => lang === 'en' ? v : ({ Open: '新建', 'In Progress': '处理中', 'Waiting Next Shift': '待下班处理', 'Waiting AG': '等待 AG', 'Waiting User': '等待用户', Monitoring: '观察中', Closed: '已关闭', Cancelled: '已取消', None: '无', Low: '低', Medium: '中', High: '高', Critical: '紧急', Create: '创建', Status: '状态', Note: '备注', Accept: '接手', Ack: '确认', Handover: '交接', External: '外部关联', Task: '任务', Hypercare: 'Hypercare' } as Record<string, string>)[v] || v
+export const statusCls = (s: string) => s === 'Waiting Next Shift' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : s === 'Monitoring' ? 'bg-cyan-100 text-cyan-700 border-cyan-200' : s === 'Closed' ? 'bg-slate-100 text-slate-500 border-slate-200' : s === 'Waiting AG' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-emerald-100 text-emerald-700 border-emerald-200'
+export const priCls = (p: string) => p === 'Critical' ? 'bg-red-600 text-white' : p === 'High' ? 'bg-orange-500 text-white' : p === 'Medium' ? 'bg-amber-400 text-slate-950' : p === 'Low' ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-700'
