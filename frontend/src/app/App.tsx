@@ -6,7 +6,7 @@ import { jp, priCls, statusCls } from '../utils/labels'
 import { addMonth, fmt, monthRangeFromToday, timeFmt, todayStr, ym } from '../utils/date'
 import { AdminPage } from '../features/admin/AdminPage'
 import { updateHypercareCheckStatus } from '../api/hypercare'
-import type { AdminSummary, CalendarRich, Dashboard, Detail, HypercareCheck, Lang, Meta, Option, Page, Schedule, Task, TimelineRich, User } from '../types'
+import type { CalendarRich, Dashboard, Detail, HypercareCheck, Lang, Meta, Option, Page, Schedule, Task, TimelineRich, User } from '../types'
 import { emptyCal, emptyDash, emptyMeta } from '../types'
 
 type T = I18nText
