@@ -1,0 +1,15 @@
+import { tByLang } from '../../i18n/dictionary'
+import type { Lang, Meta } from '../../types'
+
+type Tab = 'users' | 'groups' | 'factories' | 'systems' | 'shifts'
+
+export function AdminCreateForm({ tab, lang, meta, form, setForm, onCreate }: { tab: Tab; lang: Lang; meta: Meta; form: Record<string, string>; setForm: (f: Record<string, string>) => void; onCreate: (kind: 'users' | 'groups' | 'factories' | 'systems') => void }) {
+  const t = tByLang(lang)
+  const set = (k: string, v: string) => setForm({ ...form, [k]: v })
+
+  if (tab === 'shifts') return null
+  if (tab === 'groups') return <div className="grid gap-3 md:grid-cols-3"><input className="input" placeholder={t.name} value={form.name || ''} onChange={e => set('name', e.target.value)} /><input className="input" placeholder={t.desc} value={form.description || ''} onChange={e => set('description', e.target.value)} /><button onClick={() => onCreate('groups')} className="rounded-2xl bg-blue-600 px-4 py-3 font-black text-white">{t.create}</button></div>
+  if (tab === 'factories') return <div className="grid gap-3 md:grid-cols-3"><input className="input" placeholder={t.name} value={form.name || ''} onChange={e => set('name', e.target.value)} /><input className="input" placeholder={t.code} value={form.code || ''} onChange={e => set('code', e.target.value)} /><button onClick={() => onCreate('factories')} className="rounded-2xl bg-blue-600 px-4 py-3 font-black text-white">{t.create}</button></div>
+  if (tab === 'systems') return <div className="grid gap-3 md:grid-cols-4"><input className="input" placeholder={t.name} value={form.name || ''} onChange={e => set('name', e.target.value)} /><input className="input" placeholder={t.code} value={form.code || ''} onChange={e => set('code', e.target.value)} /><select className="input" value={form.factoryId || ''} onChange={e => set('factoryId', e.target.value)}><option value="">{t.factory}</option>{meta.factories.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select><button onClick={() => onCreate('systems')} className="rounded-2xl bg-blue-600 px-4 py-3 font-black text-white">{t.create}</button></div>
+  return <div className="grid gap-3 md:grid-cols-6"><input className="input" placeholder={t.username} value={form.username || ''} onChange={e => set('username', e.target.value)} /><input className="input" placeholder={t.name} value={form.displayName || ''} onChange={e => set('displayName', e.target.value)} /><input className="input" placeholder={t.email} value={form.email || ''} onChange={e => set('email', e.target.value)} /><select className="input" value={form.role || 'user'} onChange={e => set('role', e.target.value)}><option>user</option><option>lead</option><option>admin</option></select><select className="input" value={form.groupId || ''} onChange={e => set('groupId', e.target.value)}><option value="">{t.group}</option>{meta.groups.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select><button onClick={() => onCreate('users')} className="rounded-2xl bg-blue-600 px-4 py-3 font-black text-white">{t.create}</button></div>
+}
